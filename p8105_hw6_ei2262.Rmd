@@ -6,6 +6,7 @@ output: github_document
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(broom)
+library(janitor)
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
@@ -16,8 +17,88 @@ knitr::opts_chunk$set(echo = TRUE)
 urlfile="https://raw.githubusercontent.com/washingtonpost/data-homicides/master/homicide-data.csv"
 post_homicide = read_csv(url(urlfile))
 
+set.seed(1)
 post_homicide =
   post_homicide %>% 
-  mutate(city_state = paste(city, state, sep=", "))
+  mutate(city_state = paste(city, state, sep=", ")) %>% 
+  filter(!city_state %in% c("Dallas, TX", "Phoenix, AZ", "Kansas City, MO", "Tulsa, AL")) %>% 
+  filter(victim_race %in% c("Black", "White")) %>% 
+  mutate(
+    homicide_solved = as.numeric(disposition == "Closed by arrest"),
+    victim_race = fct_relevel(victim_race, "White"),
+    victim_age = as.numeric(victim_age),
+    victim_sex = fct_relevel(victim_sex, "Female")
+  ) %>% 
+  select(city_state, homicide_solved, victim_age, victim_sex, victim_race)
+```
+
+### Odds Ratio and Confidence Interval for Baltimore, MD
+```{r}
+baltimore_reg =
+  post_homicide %>% 
+  filter(city_state == "Baltimore, MD") %>% 
+  glm(homicide_solved ~ victim_age + victim_sex + victim_race, data = ., family = binomial()) %>%
+  tidy() %>% 
+  filter(term == "victim_sexMale") %>% 
+  select(term, estimate, std.error) %>% 
+  mutate(
+    odds_ratio = exp(estimate),
+    low_conf = exp(estimate - 1.96*std.error),
+    upper_conf = exp(estimate + 1.96*std.error)) %>% 
+  select(-estimate, -std.error)
+ 
+baltimore_reg %>% 
+  knitr::kable(digits = 3)
+```
+Homicides in which the victim is male are significantly less like to be resolved than those in which the victim is female. 
+
+### Odds Ratio and Confidence Interval for All Cities
+```{r}
+cities_reg = 
+  post_homicide %>%
+  nest(data = -city_state) %>% 
+  mutate(model = map(data, ~glm(homicide_solved ~ victim_age + victim_sex + victim_race, data = ., family = binomial())),
+         results = map(model, broom::tidy)) %>% 
+  select(-data, -model) %>% 
+  unnest(results) %>% 
+  filter(term == "victim_sexMale") %>% 
+  select(city_state, term, estimate, std.error) %>% 
+  mutate(
+    odds_ratio = exp(estimate),
+    low_conf = exp(estimate - 1.96*std.error),
+    upper_conf = exp(estimate + 1.96*std.error)) %>% 
+  select(-estimate, -std.error)
+
+cities_reg %>% 
+  knitr::kable(digits = 3)
+```
+
+#### Plot
+```{r}
+cities_reg %>% 
+  mutate(city_state = fct_reorder(city_state, odds_ratio)) %>% 
+  ggplot(aes(x=city_state, y = odds_ratio)) +
+  geom_point(stat = "identity", shape = 10) +
+  geom_errorbar(aes(ymin = low_conf, ymax = upper_conf), width = 0.4) +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90)) +
+  geom_hline(yintercept=1, color='black', linetype='dashed', alpha=.5)+
+  labs(
+    x = "City, State",
+    y = "Odds Ratios"
+    )
+```
+According to the plot, in most cities with significant odds ratios, homicides in which the victim is male are significantly less like to be resolved than those in which the victim is female.  The cities in which the homicides in which the victim is male are significantly more likely to be resolved have a very wide confidence interval and include the null value (OR = 1). Therefore, the victim's sex may not have a significant difference on whether or not the homicide will be resolved. 
+
+# Problem 3
+```{r}
+child_bwt = read_csv("data/birthweight.csv")
+
+child_bwt %>% 
+  mutate(
+    babysex = as.factor(babysex),
+    frace = as.factor(frace),
+    malform = as.factor(malform),
+    mrace = as.factor(mrace)
+  )
 ```
 
