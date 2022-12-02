@@ -7,6 +7,7 @@ output: github_document
 library(tidyverse)
 library(broom)
 library(janitor)
+library(modelr)
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
@@ -100,5 +101,74 @@ child_bwt %>%
     malform = as.factor(malform),
     mrace = as.factor(mrace)
   ) 
+```
+
+The model I propose is a linear regression model with `bwt`, baby's birthweight (continuous, lbs), as the outcome and `wtgain`, mother's weight gain during pregnancy (continuous, lbs), as the main exposure. I hypothesize that a mother's weight at delivery as a positive association with baby's birthweight, meaning that a higher mother's weight at delivery is associated with a higher baby's birthweight. If the expecting mother gains a large amount of weight, there is a higher chance that the baby will be born weighing more than a baby born from a mother who does not gain much weight during her pregnancy. I hypothesize that `momage`, mother's age at delivery (continuous, years), `delwt`, mother's weight at delivery continuous, lbs), and `fincome`, family monthly income (continuous, in hundreds, rounded) affect the association between baby's birthweight and mother's weight gain during pregnancy.
+
+## Linear Regression Model Assessing the Association Between `bwt` (baby's birthweight, lbs) and `wtgain` (mother's weight gain during pregnancy, lbs)
+```{r}
+child_bwt %>% 
+  mutate(
+    bwt = bwt*0.0022046226
+  )
+
+bwt_linear = lm(bwt ~ wtgain + momage + delwt + fincome, data = child_bwt)
+
+resids_fitted <-
+  child_bwt %>% 
+  add_residuals(bwt_linear, var = "resids") %>% 
+  add_predictions(bwt_linear, var = "fitted_values") %>% 
+  ggplot(aes(x = fitted_values, y = resids))+
+  geom_point() +
+  geom_line(color = "blue") +
+  labs(
+    title = "Residuals Against Fitted Values Plot",
+    x = "Fitted Values",
+    y = "Residuals"
+  )
+
+resids_fitted
+```
+
+## Compare Linear Models
+```{r}
+bwt_linear2 = lm(bwt ~ blength + gaweeks, data = child_bwt)
+
+child_bwt %>% 
+  mutate(
+    bhead = bhead* 0.3937007874,
+    blength = blength* 0.3937007874,
+  )
+
+bwt_linear3 = lm(bwt ~ bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex, data = child_bwt)
+```
+
+## `crossv_mc`
+```{r}
+compare_cv = 
+  crossv_mc(child_bwt, 100) %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble)
+  ) %>% 
+  mutate(
+    bwt_linear = map(train, ~lm(bwt ~ wtgain + momage + delwt + fincome, data = .x)),
+    bwt_linear2 = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    bwt_linear3 = map(train, ~lm(bwt ~ bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex, data = .x))) %>% 
+  mutate(
+    rmse_linear1 = map2_dbl(bwt_linear, test, ~rmse(model = .x, data = .y)),
+    rmse_linear2 = map2_dbl(bwt_linear2, test, ~rmse(model = .x, data = .y)),
+    rmse_linear3 = map2_dbl(bwt_linear3, test, ~rmse(model = .x, data = .y)))
+
+compare_cv %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model",
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + 
+  geom_violin()
 ```
 
