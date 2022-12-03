@@ -1,5 +1,6 @@
 ---
 title: "Homework 6"
+
 output: github_document
 ---
 
@@ -8,10 +9,82 @@ library(tidyverse)
 library(broom)
 library(janitor)
 library(modelr)
+library(viridis)
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+	fig.width = 8, 
+  fig.height = 6,
+  out.width = "90%"
+)
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # Problem 1
+To obtain a distribution for $\hat{r}^2$, we'll follow basically the same procedure we used for regression coefficients: draw bootstrap samples; the a model to each; extract the value I'm concerned with; and summarize. Here, we'll use `modelr::bootstrap` to draw the samples and `broom::glance` to produce `r.squared` values. 
+
+```{r weather_df, cache = TRUE}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
+
+```{r}
+weather_df %>% 
+  modelr::bootstrap(n = 1000) %>% 
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x) ),
+    results = map(models, broom::glance)) %>% 
+  select(-strap, -models) %>% 
+  unnest(results) %>% 
+  ggplot(aes(x = r.squared)) + geom_density()
+```
+
+In this example, the $\hat{r}^2$ value is high, and the upper bound at 1 may be a cause for the generally skewed shape of the distribution. If we wanted to construct a confidence interval for $R^2$, we could take the 2.5% and 97.5% quantiles of the estimates across bootstrap samples. However, because the shape isn't symmetric, using the mean +/- 1.96 times the standard error probably wouldn't work well.
+
+We can produce a distribution for $\log(\beta_0 * \beta1)$ using a similar approach, with a bit more wrangling before we make our plot.
+
+```{r}
+weather_df %>% 
+  modelr::bootstrap(n = 1000) %>% 
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x) ),
+    results = map(models, broom::tidy)) %>% 
+  select(-strap, -models) %>% 
+  unnest(results) %>% 
+  select(id = `.id`, term, estimate) %>% 
+  pivot_wider(
+    names_from = term, 
+    values_from = estimate) %>% 
+  rename(beta0 = `(Intercept)`, beta1 = tmin) %>% 
+  mutate(log_b0b1 = log(beta0 * beta1)) %>% 
+  ggplot(aes(x = log_b0b1)) + geom_density()
+```
+
+As with $r^2$, this distribution is somewhat skewed and has some outliers. 
+
+The point of this is not to say you should always use the bootstrap -- it's possible to establish "large sample" distributions for strange parameters / values / summaries in a lot of cases, and those are great to have. But it is helpful to know that there's a way to do inference even in tough cases. 
+
 
 # Problem 2
 ```{r}
@@ -31,6 +104,8 @@ post_homicide =
     victim_sex = fct_relevel(victim_sex, "Female")
   ) %>% 
   select(city_state, homicide_solved, victim_age, victim_sex, victim_race)
+
+post_homicide
 ```
 
 ### Odds Ratio and Confidence Interval for Baltimore, MD
@@ -103,7 +178,9 @@ child_bwt %>%
   ) 
 ```
 
-The model I propose is a linear regression model with `bwt`, baby's birthweight (continuous, lbs), as the outcome and `wtgain`, mother's weight gain during pregnancy (continuous, lbs), as the main exposure. I hypothesize that a mother's weight at delivery as a positive association with baby's birthweight, meaning that a higher mother's weight at delivery is associated with a higher baby's birthweight. If the expecting mother gains a large amount of weight, there is a higher chance that the baby will be born weighing more than a baby born from a mother who does not gain much weight during her pregnancy. I hypothesize that `momage`, mother's age at delivery (continuous, years), `delwt`, mother's weight at delivery continuous, lbs), and `fincome`, family monthly income (continuous, in hundreds, rounded) affect the association between baby's birthweight and mother's weight gain during pregnancy.
+## Proposed Model 
+
+The model I propose is a linear regression model with `bwt`, baby's birthweight (continuous, lbs), as the outcome and `wtgain`, mother's weight gain during pregnancy (continuous, lbs), as the main exposure. I hypothesize that a mother's weight at delivery as a positive association with baby's birthweight, meaning that a higher mother's weight at delivery is associated with a higher baby's birthweight. If the expecting mother gains a large amount of weight, there is a higher chance that the baby will be born weighing more than a baby born from a mother who does not gain much weight during her pregnancy. I hypothesize that `momage`, mother's age at delivery (continuous, years), `delwt`, mother's weight at delivery (continuous, lbs), and `fincome`, family monthly income (continuous, in hundreds, rounded) affect the association between baby's birthweight and mother's weight gain during pregnancy. Mother's age at delivery affects the association because the older a mother is at birth, the more at-risk she is. Therefore, there are many more factors that may contribute to her ability or need to gain weight during a pregnancy. A mother's weight at delivery affects the association because, although the mother might have gained a large amount of weight during her pregnancy, her weight at birth may not be that high. Family monthly income affects the association because a family's ability to afford groceries and other products that contribute to weight gain may affect the amount of weight a mother may gain during a pregnancy.
 
 ## Linear Regression Model Assessing the Association Between `bwt` (baby's birthweight, lbs) and `wtgain` (mother's weight gain during pregnancy, lbs)
 ```{r}
@@ -142,6 +219,19 @@ child_bwt %>%
 
 bwt_linear3 = lm(bwt ~ bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex, data = child_bwt)
 ```
+Models:
+
+1. **Linear1** = Linear Model 1 (hypothesized by me)
+    - Outcome: baby's birthweight (continuous, lbs)
+    - Predictors: mother's weight gain (continuous, lbs), mother's age at delivery (continuous, years), family income (continuous, hundreds, rounded)
+    
+2. **Linear2** = Linear Model 2 (provided on homework)
+    - Outcome: baby's birthweight (continuous, lbs)
+    - Predictors: length at birth (continuous, inches), gestational age (continuous, weeks)
+
+3. **Linear3**: Linear Model 3 (provided on homework)
+    - Outcome: baby's birthweight (continuous, lbs)
+    - Predictors: head circumference (continuous, inches), baby's length at birth (continuous, inches), baby's sex (binary), 2-way and 3-way interactions
 
 ## `crossv_mc`
 ```{r}
@@ -172,3 +262,6 @@ compare_cv %>%
   geom_violin()
 ```
 
+#### Conclusion from Comparing 3 Linear Models
+
+Based on the violin plot that was created, when my model (Linear1) is compared to the two other linear models, it is not the best model to use to understand the effects of several variables on a child's birthweight. It can be assumed that my model has little predictive value compared to model Linear2 and model Linear3. Out of the 3 models, Linear3 model has the best predictive value. Linear3 model may have the best predictive value because it incorporates interactions between the predictors in the model, which is a high possibility.  
